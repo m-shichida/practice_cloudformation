@@ -1,6 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: Create Subnet in created VPC
 
+# ======================================================================
+#                              Parameters
+# ======================================================================
+
 Parameters:
   PJPrefix:
     Description: Enter a prefix of this system.
@@ -17,8 +21,43 @@ Parameters:
     AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
     ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x. Min characters 9, Max characters 18.
 
+  PublicSubnetACIDR:
+    Type: String
+    Default: "10.0.0.0/24"
+    MinLength: 9
+    MaxLength: 18
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+
+  PublicSubnetCCIDR:
+    Type: String
+    Default: "10.0.2.0/24"
+    MinLength: 9
+    MaxLength: 18
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+
+  PrivateSubnetACIDR:
+    Type: String
+    Default: "10.0.1.0/24"
+    MinLength: 9
+    MaxLength: 18
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+
+  PrivateSubnetCCIDR:
+    Type: String
+    Default: "10.0.3.0/24"
+    MinLength: 9
+    MaxLength: 18
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+
+# !Subは内部に変数を仕込んだ文字列を埋め込むときに使う ex. !Sub ${xxx}
+# !Refはそのままパラメータから変数を持ってくる
 Resources:
-  MyVPC:
+
+# ======================================================================
+#                               VPC周り
+# ======================================================================
+
+  VPC:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: !Ref VPCCIDR
@@ -28,3 +67,249 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${PJPrefix}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${PJPrefix}-InternetGateway"
+
+  InternetGatewayAttachment:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+# ======================================================================
+#                               Subnet周り
+# ======================================================================
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: "ap-northeast-1a"
+      CidrBlock: !Ref PublicSubnetACIDR
+      Tags:
+        - Key: Name
+          Value: !Sub "${PJPrefix}-public-subnet-a"
+
+  PublicSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: "ap-northeast-1c"
+      CidrBlock: !Ref PublicSubnetCCIDR
+      Tags:
+        - Key: Name
+          Value: !Sub "${PJPrefix}-public-subnet-c"
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: "ap-northeast-1a"
+      CidrBlock: !Ref PrivateSubnetACIDR
+      Tags:
+        - Key: Name
+          Value: !Sub "${PJPrefix}-private-subnet-a"
+
+  PrivateSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: "ap-northeast-1c"
+      CidrBlock: !Ref PrivateSubnetCCIDR
+      Tags:
+        - Key: Name
+          Value: !Sub "${PJPrefix}-private-subnet-c"
+
+# ======================================================================
+#                         NATゲートウェイ作成
+# ======================================================================
+
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  # パブリックサブネット1aに対してNATゲートウェイを配置する
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnetA
+
+  # パブリックサブネット1cに対してNATゲートウェイを配置する
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnetC
+
+# ======================================================================
+#                         ルートテーブル作成
+# ======================================================================
+
+  # 以下パブリックサブネットのルートテーブル
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${PJPrefix}-public-route-table"
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetA
+
+  PublicSubnetCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetC
+
+  # 以下プライベートサブネットのルートテーブル
+  PrivateRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${PJPrefix}-private-route-table"
+
+  DefaultPrivateRouteA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      SubnetId: !Ref PrivateSubnetA
+
+  PrivateRouteTableC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${PJPrefix}-private-route-table"
+
+  DefaultPrivateRouteC:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableC
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnetCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableC
+      SubnetId: !Ref PrivateSubnetC
+
+  NoIngressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "no-ingress-sg"
+      GroupDescription: "Security group with no ingress rule"
+      VpcId: !Ref VPC
+
+# ======================================================================
+#                         セキュリティグループ作成
+# ======================================================================
+
+# ======================================================================
+#                         Output パラメータ
+# ======================================================================
+
+Outputs:
+  VPC:
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${PJPrefix}-vpc"
+
+  VPCCIDR:
+    Value: !Ref VPCCIDR
+    Export:
+      Name: !Sub "${PJPrefix}-vpc-cidr"
+
+# Subnet
+  PublicSubnetA:
+    Value: !Ref PublicSubnetA
+    Export:
+      Name: !Sub "${PJPrefix}-public-subnet-a"
+
+  PublicSubnetACIDR:
+    Value: !Ref PublicSubnetACIDR
+    Export:
+      Name: !Sub "${PJPrefix}-public-subnet-a-cidr"
+
+  PublicSubnetC:
+    Value: !Ref PublicSubnetC
+    Export:
+      Name: !Sub "${PJPrefix}-public-subnet-c"
+
+  PublicSubnetCCIDR:
+    Value: !Ref PublicSubnetCCIDR
+    Export:
+      Name: !Sub "${PJPrefix}-public-subnet-c-cidr"
+
+  PrivateSubnetA:
+    Value: !Ref PrivateSubnetA
+    Export:
+      Name: !Sub "${PJPrefix}-private-subnet-a"
+
+  PrivateSubnetACIDR:
+    Value: !Ref PrivateSubnetACIDR
+    Export:
+      Name: !Sub "${PJPrefix}-private-subnet-a-cidr"
+
+  PrivateSubnetC:
+    Value: !Ref PrivateSubnetC
+    Export:
+      Name: !Sub "${PJPrefix}-private-subnet-c"
+
+  PrivateSubnetCCIDR:
+    Value: !Ref PrivateSubnetCCIDR
+    Export:
+      Name: !Sub "${PJPrefix}-private-subnet-c-cidr"
+
+  # Route
+  PublicRouteTable:
+    Value: !Ref PublicRouteTable
+    Export:
+      Name: !Sub "${PJPrefix}-public-route"
+
+  PrivateRouteTableA:
+    Value: !Ref PrivateRouteTableA
+    Export:
+      Name: !Sub "${PJPrefix}-private-route-a"
+
+  PrivateRouteTableC:
+    Value: !Ref PrivateRouteTableC
+    Export:
+      Name: !Sub "${PJPrefix}-private-route-c"
