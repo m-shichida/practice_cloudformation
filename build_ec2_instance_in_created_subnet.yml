@@ -13,12 +13,10 @@ Parameters:
     AllowedPattern: "[a-zA-Z][a-zA-Z0-9][ -~]*"
     ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
 
-  # なんかホントはEC2によって変えるんやろうけど今回はなし
   InstanceType:
     Description: WebServer EC2 instance type
     Type: String
-    Default: t2.micro
-    AllowedPattern:
+    AllowedValues:
       - t1.micro
       - t2.nano
       - t2.micro
@@ -29,7 +27,7 @@ Parameters:
 
   KeyName:
     Description: The EC2 Key Pair to allow SSH access to the instance
-    Type: "AWS::EC2::KeyPair::KeyName"
+    Type: AWS::EC2::KeyPair::KeyName
     ConstraintDescription : Can contain only ASCII characters.
 
   SSHLocation:
@@ -44,7 +42,6 @@ Parameters:
 Mappings:
   RegionMap:
     ap-northeast-1:
-      # 一旦これだけで作成する
       hvm: "ami-0173663a2534689c6"
 
 Description: Create EC2 Instance
@@ -56,7 +53,7 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', hvm]
-      Instancetype: !Ref InstanceType
+      InstanceType: !Ref InstanceType
       SubnetId: { "Fn::ImportValue": !Sub "${PJPrefix}-public-subnet-a" }
       KeyName: !Ref KeyName
       SecurityGroupIds:
@@ -71,7 +68,7 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', hvm]
-      Instancetype: !Ref InstanceType
+      InstanceType: !Ref InstanceType
       SubnetId: { "Fn::ImportValue": !Sub "${PJPrefix}-public-subnet-c" }
       KeyName: !Ref KeyName
       SecurityGroupIds:
@@ -88,7 +85,9 @@ Resources:
       ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', hvm]
       SubnetId: { "Fn::ImportValue": !Sub "${PJPrefix}-private-subnet-a" }
       KeyName: !Ref KeyName
-      Instancetype: !Ref InstanceType
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+        - !GetAtt "DBEC2SecurityGroup.GroupId"
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -101,7 +100,9 @@ Resources:
       ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', hvm]
       SubnetId: { "Fn::ImportValue": !Sub "${PJPrefix}-private-subnet-c" }
       KeyName: !Ref KeyName
-      Instancetype: !Ref InstanceType
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+        - !GetAtt "DBEC2SecurityGroup.GroupId"
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -112,7 +113,6 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: connect with ssh http https
-      # 他のスタックから${PJPrefix-vpc}のVPCの見つけて作成する
       VpcId: { "Fn::ImportValue": !Sub "${PJPrefix}-vpc" }
       SecurityGroupIngress:
         # ssh
@@ -132,9 +132,31 @@ Resources:
   DBEC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
+      GroupDescription: connect with database
       VpcId: { "Fn::ImportValue": !Sub "${PJPrefix}-vpc" }
-      SecurityGroupIngress":
+      SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 3306
           ToPort: 3306
-          SourceSecurityGroupId" : { "Ref" : "WebServerSecurityGroup" }
+
+  ElasticIPA:
+    Type: "AWS::EC2::EIP"
+    Properties:
+      Domain: vpc
+
+  ElasticIPC:
+    Type: "AWS::EC2::EIP"
+    Properties:
+      Domain: vpc
+
+  ElasticIpAssociationA:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref PublicAEC2
+      EIP: !Ref ElasticIPA
+
+  ElasticIpAssociationC:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref PublicCEC2
+      EIP: !Ref ElasticIPC
